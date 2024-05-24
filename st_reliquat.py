@@ -5,50 +5,63 @@ import statsmodels.api as sm
 import matplotlib.pyplot as plt
 import seaborn as sns
 import folium
-from folium.plugins import HeatMap
+import altair as alt
 from streamlit_echarts import st_echarts
-
 
 
 st.set_page_config(layout="wide")
 
 st.sidebar.title("Navigation")
-option = st.sidebar.selectbox("Sélectionner un tableau:", ["Aperçu des données", "Nombre de reliquat par CTI", "Raisons des reliquats par CTI"])
-
+option = st.sidebar.selectbox("Sélectionner un tableau:", ["Nombre de reliquat par CTI", "Raisons des reliquats par CTI","Aperçu des données"])
 
 st.title("Reliquat - Analysis")
 
-uploaded_file = st.sidebar.file_uploader("Télécharger un fichier CSV", type=["csv"])
+uploaded_file = st.sidebar.file_uploader("Télécharger le fichier .csv reliquat", type=["csv"])
+
+
+
+@st.cache_data
+def load_and_process_data(file_content, start_date, end_date):
+    from io import StringIO
+    df_cleaned = pd.read_csv(StringIO(file_content), encoding='cp1252', sep=',', quotechar='"', on_bad_lines="skip")
+    df_cleaned['date'] = pd.to_datetime(df_cleaned['date'], format='%d/%m/%Y', errors='coerce')
+    df_cleaned = df_cleaned.dropna(subset=['date'])
+    
+    start_date = pd.to_datetime(start_date)
+    end_date = pd.to_datetime(end_date)
+
+    filtered_data = df_cleaned[(df_cleaned['date'] >= start_date) & (df_cleaned['date'] <= end_date)]
+    grouped_data_cti = filtered_data.groupby('transport_center')['nbr'].sum().reset_index()
+    
+    return grouped_data_cti
 
 if uploaded_file is not None:
-    # Load the CSV file
-    df_cleaned = pd.read_csv(uploaded_file, encoding='cp1252', sep=',', quotechar='"', on_bad_lines="skip")
-
-
+    file_content = uploaded_file.getvalue().decode("cp1252")
 
     if option == "Aperçu des données":
+        df_cleaned = pd.read_csv(uploaded_file, encoding='cp1252', sep=',', quotechar='"', on_bad_lines="skip")
         st.write("Aperçu des données:")
         st.write(df_cleaned)
 
-
-
-        st.write(df_cleaned.describe())
-
-
-
-
-
-    #############################################
-
-
-    # Nombre de reliquat par CTI
     elif option == "Nombre de reliquat par CTI":
+        df_cleaned = pd.read_csv(uploaded_file, encoding='cp1252', sep=',', quotechar='"', on_bad_lines="skip")
+        df_cleaned['date'] = pd.to_datetime(df_cleaned['date'], format='%d/%m/%Y', errors='coerce')
+        df_cleaned = df_cleaned.dropna(subset=['date'])
 
-        grouped_data_cti = df_cleaned.groupby('transport_center')['nbr'].sum().reset_index()
+        min_date = df_cleaned['date'].min().date()
+        max_date = df_cleaned['date'].max().date()
+
+        start_date, end_date = st.slider(
+            "Sélectionner la période",
+            min_value=min_date,
+            max_value=max_date,
+            value=(min_date, max_date)
+        )
+
+        grouped_data_cti = load_and_process_data(file_content, start_date, end_date)
 
         x_data_cti = grouped_data_cti['transport_center'].tolist()
         y_data_cti = grouped_data_cti['nbr'].tolist()
-
 
         options_cti = {
             "xAxis": {
@@ -77,14 +90,15 @@ if uploaded_file is not None:
 
 
         df_grouped = df_cleaned.groupby('name_mail_center')[['reliquat_letters', 'reliquat_parcels', 'reliquat_ZZA_ENA', 'reliquat_restmail', 'reliquat_parcelsretours']].sum().reset_index()
+        rows_to_exclude = ["1099 - NEW BRUSSEL X", "2099 - NEW ANTWERPEN X", "4099 - LIEGE X", "6099 - CHARLEROI X", "9099 - GENT X"]
+        df_grouped = df_grouped[~df_grouped['name_mail_center'].isin(rows_to_exclude)]
+        df_grouped['total_reliquats'] = df_grouped[['reliquat_letters', 'reliquat_parcels', 'reliquat_ZZA_ENA', 'reliquat_restmail', 'reliquat_parcelsretours']].sum(axis=1)
+        df_grouped = df_grouped.sort_values(by='total_reliquats', ascending=False).reset_index(drop=True)
+        df_melted = df_grouped.melt(id_vars=["name_mail_center"], value_vars=['reliquat_letters', 'reliquat_parcels', 'reliquat_ZZA_ENA', 'reliquat_restmail', 'reliquat_parcelsretours'], var_name="Type", value_name="Count")
+        df_pivot = df_melted.pivot(index='name_mail_center', columns='Type', values='Count')
 
         st.header("Types de reliquats par mail center")
-
-
-        df_melted = df_grouped.melt(id_vars="name_mail_center", var_name="Type", value_name="Count")
-
-
-        st.bar_chart(df_melted.pivot(index='name_mail_center', columns='Type', values='Count'))
+        st.bar_chart(df_pivot)
 
         st.markdown("""
         - **reliquat_letters**: Nombre de lettres en reliquat
@@ -93,6 +107,7 @@ if uploaded_file is not None:
         - **reliquat_restmail**: Nombre de restmails en reliquat
         - **reliquat_parcelsretours**: Nombre de retours de colis en reliquat
         """)
+
 
 
     #######
@@ -117,7 +132,6 @@ if uploaded_file is not None:
 
 
         st.line_chart(df_cti.set_index('date')[selected_reliquat], height=300, width=700, use_container_width=True)
-
 
 
 
